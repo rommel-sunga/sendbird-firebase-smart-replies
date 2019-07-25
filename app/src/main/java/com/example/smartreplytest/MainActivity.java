@@ -12,22 +12,117 @@ import com.google.firebase.ml.naturallanguage.smartreply.FirebaseSmartReply;
 import com.google.firebase.ml.naturallanguage.smartreply.FirebaseTextMessage;
 import com.google.firebase.ml.naturallanguage.smartreply.SmartReplySuggestion;
 import com.google.firebase.ml.naturallanguage.smartreply.SmartReplySuggestionResult;
+import com.sendbird.android.BaseChannel;
+import com.sendbird.android.BaseMessage;
+import com.sendbird.android.GroupChannel;
+import com.sendbird.android.PreviousMessageListQuery;
+import com.sendbird.android.SendBird;
+import com.sendbird.android.SendBirdException;
+import com.sendbird.android.User;
+import com.sendbird.android.UserMessage;
+import com.sendbird.android.UserMessageParams;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
+    // Firebase Conversation Object
+    private List<FirebaseTextMessage> conversation;
+
+    // SendBird Pre-created Values
+    private String currentUserId = "sendbird_user_1";
+    private String currentAppId = "4513ED93-B71C-4056-9FD6-78E44E4AD8C8";
+    private String currentChannelId = "firebase_test_channel_1";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        Log.d("Debug Smart Replies", "On Create called");
+
         setContentView(R.layout.activity_main);
 
-        List<FirebaseTextMessage> conversation = new ArrayList<>();
-        conversation.add(FirebaseTextMessage.createForLocalUser("I love cars.", System.currentTimeMillis()));
-        conversation.add(FirebaseTextMessage.createForRemoteUser("My Favorite car is Toyota.", System.currentTimeMillis(), "user1"));
-        conversation.add(FirebaseTextMessage.createForRemoteUser("Whats your Favorite Car?", System.currentTimeMillis(), "user1"));
+        // Firebase Conversation Object will be filled with object information
+        conversation = new ArrayList<>();
+        conversation.add(FirebaseTextMessage.createForLocalUser("We are just testing", System.currentTimeMillis()));
 
+        SendBird.init(currentAppId, getApplicationContext());
+
+        SendBird.connect(currentUserId, new SendBird.ConnectHandler() {
+            @Override
+            public void onConnected(User user, SendBirdException e) {
+                if (e != null) {
+                    e.printStackTrace();
+                    return;
+                }
+
+
+                // This is assuming it is the case where you are retrieving a old GroupChannel
+                // For GroupChannel.createChannel() simply skip retrieving the message history
+                GroupChannel.getChannel("firebase_test_channel_1", new GroupChannel.GroupChannelGetHandler() {
+                    @Override
+                    public void onResult(GroupChannel groupChannel, SendBirdException e) {
+                        if (e != null) {
+                            Log.d("Debug Smart Replies", "error during getChannel()");
+
+                            e.printStackTrace();
+                            return;
+                        }
+
+                        // When you load previous messages for a channel, add them to the Firebase Conversation object.
+                        loadPreviousMessagesAndUpdateConversation(groupChannel);
+
+                        // Before a user sends a message, query the conversation for a suggestion
+                        List<String> suggestedMessages = getSuggestion();
+
+                        // Display the list of suggested messages to the user and let them choose.
+                        // Here we simply choose the first suggested message.
+                        String messageText = suggestedMessages.get(0);
+
+                        // Send a UserMessage with the suggested message and update the conversation
+                        sendUserMessageAndUpdateConversation(groupChannel, messageText);
+                    }
+                });
+
+            }
+        });
+    }
+
+    private void loadPreviousMessagesAndUpdateConversation(GroupChannel groupChannel) {
+        Log.d("Debug Smart Replies", "Start of loadPreviousMessagesAndUpdateConversation");
+
+        PreviousMessageListQuery prevMessageListQuery = groupChannel.createPreviousMessageListQuery();
+        prevMessageListQuery.load(30, true, new PreviousMessageListQuery.MessageListQueryResult() {
+            @Override
+            public void onResult(List<BaseMessage> list, SendBirdException e) {
+
+                if (e != null) {    // Error.
+                    return;
+                }
+
+            }
+        });
+    }
+
+    private void sendUserMessageAndUpdateConversation(GroupChannel groupChannel, String suggestedMessage) {
+        UserMessageParams params = new UserMessageParams();
+        params.setMessage(suggestedMessage);
+        groupChannel.sendUserMessage(params, new BaseChannel.SendUserMessageHandler() {
+            @Override
+            public void onSent(UserMessage userMessage, SendBirdException e) {
+                if (e != null) {
+                    e.printStackTrace();
+                    return;
+                }
+                // Add successfully sent message as part of the conversation
+                conversation.add(FirebaseTextMessage.createForLocalUser(userMessage.getMessage(), System.currentTimeMillis()));
+            }
+        });
+    }
+
+    private List<String> getSuggestion() {
+        Log.d("Debug Smart Replies", "Start of getSuggestion");
+
+        final List<String> suggestedReplies = new ArrayList<>();
 
         FirebaseSmartReply smartReply = FirebaseNaturalLanguage.getInstance().getSmartReply();
         smartReply.suggestReplies(conversation)
@@ -37,12 +132,13 @@ public class MainActivity extends AppCompatActivity {
                         if (result.getStatus() == SmartReplySuggestionResult.STATUS_NOT_SUPPORTED_LANGUAGE) {
                             // The conversation's language isn't supported, so the
                             // the result doesn't contain any suggestions.
-                            Log.d("Test", "Exception occured while calculating smart replies");
-
+                            Log.d("Debug Smart Replies", "Exception occured while calculating smart replies");
                         } else if (result.getStatus() == SmartReplySuggestionResult.STATUS_SUCCESS) {
                             for (SmartReplySuggestion suggestion : result.getSuggestions()) {
                                 String replyText = suggestion.getText();
-                                Log.d("Test", "smart replies " + replyText);
+                                suggestedReplies.add(replyText);
+                                Log.d("Debug Smart Replies", "smart replies " + replyText);
+
                             }
                         }
                     }
@@ -52,9 +148,25 @@ public class MainActivity extends AppCompatActivity {
                     public void onFailure(@NonNull Exception e) {
                         // Task failed with an exception
                         // ...
-                        Log.d("Test", "Exception occured while calculating smart replies");
-
+                        Log.d("Debug Smart Replies", "Exception occured while calculating smart replies");
                     }
                 });
+        return suggestedReplies;
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+
+        // Add new messages as they are received to the Firebase Conversation
+        SendBird.addChannelHandler(currentChannelId, new SendBird.ChannelHandler() {
+            @Override
+            public void onMessageReceived(BaseChannel baseChannel, BaseMessage baseMessage) {
+                if (baseChannel.getUrl().equals(currentChannelId) && baseMessage instanceof UserMessage) {
+                    UserMessage userMessage = (UserMessage) baseMessage;
+                    conversation.add(FirebaseTextMessage.createForRemoteUser(userMessage.getMessage(), System.currentTimeMillis(), userMessage.getSender().getUserId()));
+                }
+            }
+        });
     }
 }
