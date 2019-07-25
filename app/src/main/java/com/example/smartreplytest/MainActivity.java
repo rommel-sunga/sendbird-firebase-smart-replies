@@ -29,9 +29,9 @@ public class MainActivity extends AppCompatActivity {
     private List<FirebaseTextMessage> conversation;
 
     // SendBird Pre-created Values
-    private String currentUserId = "<FILL IN SENDBIRD USER ID>";
-    private String currentAppId = "<FILL IN APP_ID>";
-    private String currentChannelId = "<FILL IN EXISTING GROUP CHANNEL>";
+    private String currentUserId = "sendbird_user_1";
+    private String currentAppId = "4513ED93-B71C-4056-9FD6-78E44E4AD8C8";
+    private String currentChannelId = "firebase_test_channel_1";
     private GroupChannel mGroupChannel;
 
     @Override
