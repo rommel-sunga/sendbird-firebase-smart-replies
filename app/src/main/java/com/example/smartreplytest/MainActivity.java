@@ -15,7 +15,6 @@ import com.google.firebase.ml.naturallanguage.smartreply.SmartReplySuggestionRes
 import com.sendbird.android.BaseChannel;
 import com.sendbird.android.BaseMessage;
 import com.sendbird.android.GroupChannel;
-import com.sendbird.android.PreviousMessageListQuery;
 import com.sendbird.android.SendBird;
 import com.sendbird.android.SendBirdException;
 import com.sendbird.android.User;
@@ -33,12 +32,11 @@ public class MainActivity extends AppCompatActivity {
     private String currentUserId = "sendbird_user_1";
     private String currentAppId = "4513ED93-B71C-4056-9FD6-78E44E4AD8C8";
     private String currentChannelId = "firebase_test_channel_1";
+    private GroupChannel mGroupChannel;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Log.d("Debug Smart Replies", "On Create called");
-
         setContentView(R.layout.activity_main);
 
         // Firebase Conversation Object will be filled with object information
@@ -55,73 +53,53 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
 
-
                 // This is assuming it is the case where you are retrieving a old GroupChannel
                 // For GroupChannel.createChannel() simply skip retrieving the message history
                 GroupChannel.getChannel("firebase_test_channel_1", new GroupChannel.GroupChannelGetHandler() {
                     @Override
                     public void onResult(GroupChannel groupChannel, SendBirdException e) {
                         if (e != null) {
-                            Log.d("Debug Smart Replies", "error during getChannel()");
-
                             e.printStackTrace();
                             return;
                         }
 
+                        mGroupChannel = groupChannel;
+
                         // When you load previous messages for a channel, add them to the Firebase Conversation object.
                         loadPreviousMessagesAndUpdateConversation(groupChannel);
 
-                        // Before a user sends a message, query the conversation for a suggestion
-                        List<String> suggestedMessages = getSuggestion();
-
-                        // Display the list of suggested messages to the user and let them choose.
-                        // Here we simply choose the first suggested message.
-                        String messageText = suggestedMessages.get(0);
-
-                        // Send a UserMessage with the suggested message and update the conversation
-                        sendUserMessageAndUpdateConversation(groupChannel, messageText);
                     }
                 });
-
             }
         });
     }
 
     private void loadPreviousMessagesAndUpdateConversation(GroupChannel groupChannel) {
-        Log.d("Debug Smart Replies", "Start of loadPreviousMessagesAndUpdateConversation");
-
-        PreviousMessageListQuery prevMessageListQuery = groupChannel.createPreviousMessageListQuery();
-        prevMessageListQuery.load(30, true, new PreviousMessageListQuery.MessageListQueryResult() {
+        groupChannel.getPreviousMessagesByTimestamp(System.currentTimeMillis(), true, 20, false, BaseChannel.MessageTypeFilter.USER, null, new BaseChannel.GetMessagesHandler() {
             @Override
             public void onResult(List<BaseMessage> list, SendBirdException e) {
-
-                if (e != null) {    // Error.
-                    return;
-                }
-
-            }
-        });
-    }
-
-    private void sendUserMessageAndUpdateConversation(GroupChannel groupChannel, String suggestedMessage) {
-        UserMessageParams params = new UserMessageParams();
-        params.setMessage(suggestedMessage);
-        groupChannel.sendUserMessage(params, new BaseChannel.SendUserMessageHandler() {
-            @Override
-            public void onSent(UserMessage userMessage, SendBirdException e) {
                 if (e != null) {
                     e.printStackTrace();
                     return;
                 }
-                // Add successfully sent message as part of the conversation
-                conversation.add(FirebaseTextMessage.createForLocalUser(userMessage.getMessage(), System.currentTimeMillis()));
+
+                for (BaseMessage message : list) {
+                    UserMessage userMessage = ((UserMessage) message);
+                    String senderUserId = userMessage.getSender().getUserId();
+                    if (senderUserId.equals(currentUserId)) {
+                        conversation.add(FirebaseTextMessage.createForLocalUser(userMessage.getMessage(), System.currentTimeMillis()));
+                    } else {
+                        conversation.add(FirebaseTextMessage.createForRemoteUser(userMessage.getMessage(), System.currentTimeMillis(), senderUserId));
+                    }
+                }
+
+                // Before a user sends a message, query the conversation for a suggestion
+                getSuggestionAndSendMessage();
             }
         });
     }
 
-    private List<String> getSuggestion() {
-        Log.d("Debug Smart Replies", "Start of getSuggestion");
-
+    private void getSuggestionAndSendMessage() {
         final List<String> suggestedReplies = new ArrayList<>();
 
         FirebaseSmartReply smartReply = FirebaseNaturalLanguage.getInstance().getSmartReply();
@@ -138,8 +116,14 @@ public class MainActivity extends AppCompatActivity {
                                 String replyText = suggestion.getText();
                                 suggestedReplies.add(replyText);
                                 Log.d("Debug Smart Replies", "smart replies " + replyText);
-
                             }
+
+                            // In a real example, display the list of suggested messages to the user and let them choose.
+                            // Here we simply choose the first suggested message.
+                            String messageText = suggestedReplies.get(0);
+
+                            // Send a UserMessage with the suggested message and update the conversation
+                            sendUserMessageAndUpdateConversation(mGroupChannel, messageText);
                         }
                     }
                 })
@@ -148,10 +132,26 @@ public class MainActivity extends AppCompatActivity {
                     public void onFailure(@NonNull Exception e) {
                         // Task failed with an exception
                         // ...
-                        Log.d("Debug Smart Replies", "Exception occured while calculating smart replies");
+                        e.printStackTrace();
                     }
                 });
-        return suggestedReplies;
+    }
+
+    private void sendUserMessageAndUpdateConversation(GroupChannel groupChannel, String suggestedMessage) {
+        UserMessageParams params = new UserMessageParams();
+        params.setMessage(suggestedMessage);
+        groupChannel.sendUserMessage(params, new BaseChannel.SendUserMessageHandler() {
+            @Override
+            public void onSent(UserMessage userMessage, SendBirdException e) {
+                if (e != null) {
+                    e.printStackTrace();
+                    return;
+                }
+
+                // Add successfully sent message as part of the conversation
+                conversation.add(FirebaseTextMessage.createForLocalUser(userMessage.getMessage(), System.currentTimeMillis()));
+            }
+        });
     }
 
     @Override
